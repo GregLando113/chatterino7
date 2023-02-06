@@ -29,6 +29,7 @@ public:
 
     void setAddButtonVisible(bool value);
     void setViewersButtonVisible(bool value);
+    void setStreamlinkButtonVisible(bool value);
 
     void updateChannelText();
     void updateModerationModeIcon();
@@ -74,6 +75,7 @@ private:
     EffectLabel *modeButton_{};
     Button *moderationButton_{};
     Button *viewersButton_{};
+    Button *streamlinkButton_{};
     Button *addButton_{};
 
     // states

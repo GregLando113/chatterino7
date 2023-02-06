@@ -325,6 +325,12 @@ void SplitHeader::initializeLayout()
                 this->split_->showViewerList();
             });
         }),
+        // streamlink
+        this->streamlinkButton_ = makeWidget<Button>([&](auto w) {
+            QObject::connect(w, &Button::leftClicked, this, [this]() {
+                this->split_->openInStreamlink();
+            });
+        }),
         // dropdown
         this->dropdownButton_ = makeWidget<Button>([&](auto w) {
             /// XXX: this never gets disconnected
@@ -752,6 +758,7 @@ void SplitHeader::scaleChangedEvent(float scale)
     this->dropdownButton_->setFixedWidth(w);
     this->moderationButton_->setFixedWidth(w);
     this->viewersButton_->setFixedWidth(w);
+    this->streamlinkButton_->setFixedWidth(w);
     this->addButton_->setFixedWidth(w * 5 / 8);
 }
 
@@ -763,6 +770,11 @@ void SplitHeader::setAddButtonVisible(bool value)
 void SplitHeader::setViewersButtonVisible(bool value)
 {
     this->viewersButton_->setVisible(value);
+}
+
+void SplitHeader::setStreamlinkButtonVisible(bool value)
+{
+    this->streamlinkButton_->setVisible(value);
 }
 
 void SplitHeader::updateChannelText()
@@ -1005,6 +1017,7 @@ void SplitHeader::themeChangedEvent()
         this->dropdownButton_->setPixmap(getResources().buttons.menuLight);
         this->addButton_->setPixmap(getResources().buttons.addSplitDark);
     }
+    this->streamlinkButton_->setPixmap(getResources().twitch.broadcaster);
 
     this->update();
 }
