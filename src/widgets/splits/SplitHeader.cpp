@@ -1017,7 +1017,7 @@ void SplitHeader::themeChangedEvent()
         this->dropdownButton_->setPixmap(getResources().buttons.menuLight);
         this->addButton_->setPixmap(getResources().buttons.addSplitDark);
     }
-    this->streamlinkButton_->setPixmap(getResources().twitch.broadcaster);
+    this->streamlinkButton_->setPixmap(getResources().buttons.videoPlay);
 
     this->update();
 }
