@@ -5,14 +5,19 @@
 #include "common/Atomic.hpp"
 #include "common/FlagsEnum.hpp"
 
+#include <QJsonObject>
+
 #include <memory>
 
 namespace chatterino {
 
+class ImageSet;
 class Channel;
-struct SeventvEventAPIEmoteAddDispatch;
-struct SeventvEventAPIEmoteUpdateDispatch;
-struct SeventvEventAPIEmoteRemoveDispatch;
+namespace seventv::eventapi {
+    struct EmoteAddDispatch;
+    struct EmoteUpdateDispatch;
+    struct EmoteRemoveDispatch;
+}  // namespace seventv::eventapi
 
 // https://github.com/SevenTV/API/blob/a84e884b5590dbb5d91a5c6b3548afabb228f385/data/model/emote-set.model.go#L29-L36
 enum class SeventvActiveEmoteFlag : int64_t {
@@ -86,7 +91,7 @@ public:
      */
     static boost::optional<EmotePtr> addEmote(
         Atomic<std::shared_ptr<const EmoteMap>> &map,
-        const SeventvEventAPIEmoteAddDispatch &dispatch);
+        const seventv::eventapi::EmoteAddDispatch &dispatch);
 
     /**
      * Updates an emote in this `map`.
@@ -97,7 +102,7 @@ public:
      */
     static boost::optional<EmotePtr> updateEmote(
         Atomic<std::shared_ptr<const EmoteMap>> &map,
-        const SeventvEventAPIEmoteUpdateDispatch &dispatch);
+        const seventv::eventapi::EmoteUpdateDispatch &dispatch);
 
     /**
      * Removes an emote from this `map`.
@@ -108,13 +113,20 @@ public:
      */
     static boost::optional<EmotePtr> removeEmote(
         Atomic<std::shared_ptr<const EmoteMap>> &map,
-        const SeventvEventAPIEmoteRemoveDispatch &dispatch);
+        const seventv::eventapi::EmoteRemoveDispatch &dispatch);
 
     /** Fetches an emote-set by its id */
     static void getEmoteSet(
         const QString &emoteSetId,
         std::function<void(EmoteMap &&, QString)> successCallback,
         std::function<void(QString)> errorCallback);
+
+    /**
+     * Creates an image set from a 7TV emote or badge.
+     *
+     * @param emoteData { host: { files: [], url } }
+     */
+    static ImageSet createImageSet(const QJsonObject &emoteData);
 
 private:
     Atomic<std::shared_ptr<const EmoteMap>> global_;

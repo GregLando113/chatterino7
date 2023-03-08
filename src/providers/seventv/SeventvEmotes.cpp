@@ -7,7 +7,7 @@
 #include "messages/Image.hpp"
 #include "messages/ImageSet.hpp"
 #include "messages/MessageBuilder.hpp"
-#include "providers/seventv/eventapi/SeventvEventAPIDispatch.hpp"
+#include "providers/seventv/eventapi/Dispatch.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "singletons/Settings.hpp"
 
@@ -30,6 +30,7 @@
 namespace {
 
 using namespace chatterino;
+using namespace seventv::eventapi;
 
 // These declarations won't throw an exception.
 const QString CHANNEL_HAS_NO_EMOTES("This channel has no 7TV channel emotes.");
@@ -76,70 +77,6 @@ bool isZeroWidthRecommended(const QJsonObject &emoteData)
     return flags.has(SeventvEmoteFlag::ZeroWidth);
 }
 
-ImageSet makeImageSet(const QJsonObject &emoteData)
-{
-    auto host = emoteData["host"].toObject();
-    // "//cdn.7tv[...]"
-    auto baseUrl = host["url"].toString();
-    auto files = host["files"].toArray();
-
-    std::array<ImagePtr, 4> sizes;
-    double baseWidth = 0.0;
-    int nextSize = 0;
-
-    for (auto fileItem : files)
-    {
-        if (nextSize >= sizes.size())
-        {
-            break;
-        }
-
-        auto file = fileItem.toObject();
-        if (file["format"].toString() != "WEBP")
-        {
-            continue;  // We only use webp
-        }
-
-        double width = file["width"].toDouble();
-        double scale = 1.0;  // in relation to first image
-        if (baseWidth > 0.0)
-        {
-            scale = baseWidth / width;
-        }
-        else
-        {
-            // => this is the first image
-            baseWidth = width;
-        }
-
-        auto image = Image::fromUrl(
-            {QString("https:%1/%2").arg(baseUrl, file["name"].toString())},
-            scale);
-
-        sizes.at(nextSize) = image;
-        nextSize++;
-    }
-
-    if (nextSize < sizes.size())
-    {
-        // this should be really rare
-        // this means we didn't get all sizes of an emote
-        if (nextSize == 0)
-        {
-            qCDebug(chatterinoSeventv)
-                << "Got file list without any eligible files";
-            // When this emote is typed, chatterino will crash.
-            return ImageSet{};
-        }
-        for (; nextSize < sizes.size(); nextSize++)
-        {
-            sizes.at(nextSize) = Image::getEmpty();
-        }
-    }
-
-    return ImageSet{sizes[0], sizes[1], sizes[2], sizes[3]};
-}
-
 Tooltip createTooltip(const QString &name, const QString &author, bool isGlobal)
 {
     return Tooltip{QString("%1<br>%2 7TV Emote<br>By: %3")
@@ -170,7 +107,7 @@ CreateEmoteResult createEmote(const QJsonObject &activeEmote,
             ? createAliasedTooltip(emoteName.string, baseEmoteName.string,
                                    author.string, isGlobal)
             : createTooltip(emoteName.string, author.string, isGlobal);
-    auto imageSet = makeImageSet(emoteData);
+    auto imageSet = SeventvEmotes::createImageSet(emoteData);
 
     auto emote =
         Emote({emoteName, imageSet, tooltip,
@@ -223,7 +160,7 @@ EmoteMap parseEmotes(const QJsonArray &emoteSetEmotes, bool isGlobal)
 }
 
 EmotePtr createUpdatedEmote(const EmotePtr &oldEmote,
-                            const SeventvEventAPIEmoteUpdateDispatch &dispatch)
+                            const EmoteUpdateDispatch &dispatch)
 {
     bool toNonAliased = oldEmote->baseName.has_value() &&
                         dispatch.emoteName == oldEmote->baseName->string;
@@ -243,6 +180,8 @@ EmotePtr createUpdatedEmote(const EmotePtr &oldEmote,
 }  // namespace
 
 namespace chatterino {
+
+using namespace seventv::eventapi;
 
 SeventvEmotes::SeventvEmotes()
     : global_(std::make_shared<EmoteMap>())
@@ -400,7 +339,7 @@ void SeventvEmotes::loadChannelEmotes(
 
 boost::optional<EmotePtr> SeventvEmotes::addEmote(
     Atomic<std::shared_ptr<const EmoteMap>> &map,
-    const SeventvEventAPIEmoteAddDispatch &dispatch)
+    const EmoteAddDispatch &dispatch)
 {
     // Check for visibility first, so we don't copy the map.
     auto emoteData = dispatch.emoteJson["data"].toObject();
@@ -428,7 +367,7 @@ boost::optional<EmotePtr> SeventvEmotes::addEmote(
 
 boost::optional<EmotePtr> SeventvEmotes::updateEmote(
     Atomic<std::shared_ptr<const EmoteMap>> &map,
-    const SeventvEventAPIEmoteUpdateDispatch &dispatch)
+    const EmoteUpdateDispatch &dispatch)
 {
     auto oldMap = map.get();
     auto oldEmote = oldMap->findEmote(dispatch.emoteName, dispatch.emoteID);
@@ -450,7 +389,7 @@ boost::optional<EmotePtr> SeventvEmotes::updateEmote(
 
 boost::optional<EmotePtr> SeventvEmotes::removeEmote(
     Atomic<std::shared_ptr<const EmoteMap>> &map,
-    const SeventvEventAPIEmoteRemoveDispatch &dispatch)
+    const EmoteRemoveDispatch &dispatch)
 {
     // This copies the map.
     EmoteMap updatedMap = *map.get();
@@ -502,6 +441,70 @@ void SeventvEmotes::getEmoteSet(
             }
         })
         .execute();
+}
+
+ImageSet SeventvEmotes::createImageSet(const QJsonObject &emoteData)
+{
+    auto host = emoteData["host"].toObject();
+    // "//cdn.7tv[...]"
+    auto baseUrl = host["url"].toString();
+    auto files = host["files"].toArray();
+
+    std::array<ImagePtr, 4> sizes;
+    double baseWidth = 0.0;
+    int nextSize = 0;
+
+    for (auto fileItem : files)
+    {
+        if (nextSize >= sizes.size())
+        {
+            break;
+        }
+
+        auto file = fileItem.toObject();
+        if (file["format"].toString() != "WEBP")
+        {
+            continue;  // We only use webp
+        }
+
+        double width = file["width"].toDouble();
+        double scale = 1.0;  // in relation to first image
+        if (baseWidth > 0.0)
+        {
+            scale = baseWidth / width;
+        }
+        else
+        {
+            // => this is the first image
+            baseWidth = width;
+        }
+
+        auto image = Image::fromUrl(
+            {QString("https:%1/%2").arg(baseUrl, file["name"].toString())},
+            scale);
+
+        sizes.at(nextSize) = image;
+        nextSize++;
+    }
+
+    if (nextSize < sizes.size())
+    {
+        // this should be really rare
+        // this means we didn't get all sizes of an emote
+        if (nextSize == 0)
+        {
+            qCDebug(chatterinoSeventv)
+                << "Got file list without any eligible files";
+            // When this emote is typed, chatterino will crash.
+            return ImageSet{};
+        }
+        for (; nextSize < sizes.size(); nextSize++)
+        {
+            sizes.at(nextSize) = Image::getEmpty();
+        }
+    }
+
+    return ImageSet{sizes[0], sizes[1], sizes[2], sizes[3]};
 }
 
 }  // namespace chatterino

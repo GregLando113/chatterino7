@@ -6,6 +6,7 @@
 #include "common/NetworkResult.hpp"
 #include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
+#include "controllers/commands/CommandController.hpp"
 #include "controllers/highlights/HighlightBlacklistUser.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "messages/Message.hpp"
@@ -34,6 +35,7 @@
 
 #include <QCheckBox>
 #include <QDesktopServices>
+#include <QFile>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
@@ -235,6 +237,10 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, QWidget *parent,
                            .arg(this->userName_)
                            .arg(calculateTimeoutDuration(button));
              }
+
+             msg = getApp()->commands->execCommand(
+                 msg, this->underlyingChannel_, false);
+
              this->underlyingChannel_->sendMessage(msg);
              return "";
          }},
@@ -432,16 +438,28 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, QWidget *parent,
         });
 
         QObject::connect(mod.getElement(), &Button::leftClicked, [this] {
-            this->underlyingChannel_->sendMessage("/mod " + this->userName_);
+            QString value = "/mod " + this->userName_;
+            value = getApp()->commands->execCommand(
+                value, this->underlyingChannel_, false);
+            this->underlyingChannel_->sendMessage(value);
         });
         QObject::connect(unmod.getElement(), &Button::leftClicked, [this] {
-            this->underlyingChannel_->sendMessage("/unmod " + this->userName_);
+            QString value = "/unmod " + this->userName_;
+            value = getApp()->commands->execCommand(
+                value, this->underlyingChannel_, false);
+            this->underlyingChannel_->sendMessage(value);
         });
         QObject::connect(vip.getElement(), &Button::leftClicked, [this] {
-            this->underlyingChannel_->sendMessage("/vip " + this->userName_);
+            QString value = "/vip " + this->userName_;
+            value = getApp()->commands->execCommand(
+                value, this->underlyingChannel_, false);
+            this->underlyingChannel_->sendMessage(value);
         });
         QObject::connect(unvip.getElement(), &Button::leftClicked, [this] {
-            this->underlyingChannel_->sendMessage("/unvip " + this->userName_);
+            QString value = "/unvip " + this->userName_;
+            value = getApp()->commands->execCommand(
+                value, this->underlyingChannel_, false);
+            this->underlyingChannel_->sendMessage(value);
         });
 
         // userstate
@@ -496,25 +514,35 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, QWidget *parent,
                 case TimeoutWidget::Ban: {
                     if (this->underlyingChannel_)
                     {
-                        this->underlyingChannel_->sendMessage("/ban " +
-                                                              this->userName_);
+                        QString value = "/ban " + this->userName_;
+                        value = getApp()->commands->execCommand(
+                            value, this->underlyingChannel_, false);
+
+                        this->underlyingChannel_->sendMessage(value);
                     }
                 }
                 break;
                 case TimeoutWidget::Unban: {
                     if (this->underlyingChannel_)
                     {
-                        this->underlyingChannel_->sendMessage("/unban " +
-                                                              this->userName_);
+                        QString value = "/unban " + this->userName_;
+                        value = getApp()->commands->execCommand(
+                            value, this->underlyingChannel_, false);
+
+                        this->underlyingChannel_->sendMessage(value);
                     }
                 }
                 break;
                 case TimeoutWidget::Timeout: {
                     if (this->underlyingChannel_)
                     {
-                        this->underlyingChannel_->sendMessage(
-                            "/timeout " + this->userName_ + " " +
-                            QString::number(arg));
+                        QString value = "/timeout " + this->userName_ + " " +
+                                        QString::number(arg);
+
+                        value = getApp()->commands->execCommand(
+                            value, this->underlyingChannel_, false);
+
+                        this->underlyingChannel_->sendMessage(value);
                     }
                 }
                 break;
@@ -1017,7 +1045,7 @@ void UserInfoPopup::loadSevenTVAvatar(const HelixUser &user)
             static auto *manager = new QNetworkAccessManager();
             auto *reply = manager->get(req);
 
-            QObject::connect(reply, &QNetworkReply::finished, this, [=] {
+            QObject::connect(reply, &QNetworkReply::finished, this, [=, this] {
                 if (reply->error() == QNetworkReply::NoError)
                 {
                     this->avatarUrl_ = url;

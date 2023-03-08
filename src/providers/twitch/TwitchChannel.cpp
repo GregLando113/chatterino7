@@ -18,7 +18,7 @@
 #include "providers/bttv/BttvLiveUpdates.hpp"
 #include "providers/bttv/liveupdates/BttvLiveUpdateMessages.hpp"
 #include "providers/RecentMessagesApi.hpp"
-#include "providers/seventv/eventapi/SeventvEventAPIDispatch.hpp"
+#include "providers/seventv/eventapi/Dispatch.hpp"
 #include "providers/seventv/SeventvEmotes.hpp"
 #include "providers/seventv/SeventvEventAPI.hpp"
 #include "providers/twitch/api/Helix.hpp"
@@ -39,6 +39,7 @@
 
 #include <IrcConnection>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QThread>
@@ -106,6 +107,7 @@ TwitchChannel::TwitchChannel(const QString &name)
         this->refreshBTTVChannelEmotes(false);
         this->refreshSevenTVChannelEmotes(false);
         this->joinBttvChannel();
+        this->listenSevenTVCosmetics();
     });
 
     this->connected.connect([this]() {
@@ -119,16 +121,6 @@ TwitchChannel::TwitchChannel(const QString &name)
         }
 
         this->loadRecentMessagesReconnect();
-    });
-
-    this->destroyed.connect([this]() {
-        getApp()->twitch->dropSeventvChannel(this->seventvUserID_,
-                                             this->seventvEmoteSetID_);
-
-        if (getApp()->twitch->bttvLiveUpdates)
-        {
-            getApp()->twitch->bttvLiveUpdates->partChannel(this->roomId());
-        }
     });
 
     this->messageRemovedFromStart.connect([this](MessagePtr &msg) {
@@ -167,6 +159,23 @@ TwitchChannel::TwitchChannel(const QString &name)
         this->addMessage(makeSystemMessage("asef"));
     }
 #endif
+}
+
+TwitchChannel::~TwitchChannel()
+{
+    getApp()->twitch->dropSeventvChannel(this->seventvUserID_,
+                                         this->seventvEmoteSetID_);
+
+    if (getApp()->twitch->bttvLiveUpdates)
+    {
+        getApp()->twitch->bttvLiveUpdates->partChannel(this->roomId());
+    }
+
+    if (getApp()->twitch->seventvEventAPI)
+    {
+        getApp()->twitch->seventvEventAPI->unsubscribeTwitchChannel(
+            this->roomId());
+    }
 }
 
 void TwitchChannel::initialize()
@@ -303,7 +312,21 @@ void TwitchChannel::addChannelPointReward(const ChannelPointReward &reward)
             << "[TwitchChannel" << this->getName()
             << "] Channel point reward added:" << reward.id << ","
             << reward.title << "," << reward.isUserInputRequired;
-        this->channelPointRewardAdded.invoke(reward);
+
+        // TODO: There's an underlying bug here. This bug should be fixed.
+        // This only attempts to prevent a crash when invoking the signal.
+        try
+        {
+            this->channelPointRewardAdded.invoke(reward);
+        }
+        catch (const std::bad_function_call &)
+        {
+            qCWarning(chatterinoTwitch).nospace()
+                << "[TwitchChannel " << this->getName()
+                << "] Caught std::bad_function_call when adding channel point "
+                   "reward ChannelPointReward{ id: "
+                << reward.id << ", title: " << reward.title << " }.";
+        }
     }
 }
 
@@ -355,10 +378,6 @@ QString TwitchChannel::prepareMessage(const QString &message) const
     auto app = getApp();
     QString parsedMessage = app->emotes->emojis.replaceShortCodes(message);
 
-    // This is to make sure that combined emoji go through properly, see
-    // https://github.com/Chatterino/chatterino2/issues/3384 and
-    // https://mm2pl.github.io/emoji_rfc.pdf for more details
-    parsedMessage.replace(ZERO_WIDTH_JOINER, ESCAPE_TAG);
     parsedMessage = parsedMessage.simplified();
 
     if (parsedMessage.isEmpty())
@@ -425,6 +444,7 @@ void TwitchChannel::sendMessage(const QString &message)
 
     bool messageSent = false;
     this->sendMessageSignal.invoke(this->getName(), parsedMessage, messageSent);
+    this->updateSevenTVActivity();
 
     if (messageSent)
     {
@@ -691,7 +711,7 @@ void TwitchChannel::removeBttvEmote(
 }
 
 void TwitchChannel::addSeventvEmote(
-    const SeventvEventAPIEmoteAddDispatch &dispatch)
+    const seventv::eventapi::EmoteAddDispatch &dispatch)
 {
     if (!SeventvEmotes::addEmote(this->seventvEmotes_, dispatch))
     {
@@ -703,7 +723,7 @@ void TwitchChannel::addSeventvEmote(
 }
 
 void TwitchChannel::updateSeventvEmote(
-    const SeventvEventAPIEmoteUpdateDispatch &dispatch)
+    const seventv::eventapi::EmoteUpdateDispatch &dispatch)
 {
     if (!SeventvEmotes::updateEmote(this->seventvEmotes_, dispatch))
     {
@@ -717,7 +737,7 @@ void TwitchChannel::updateSeventvEmote(
 }
 
 void TwitchChannel::removeSeventvEmote(
-    const SeventvEventAPIEmoteRemoveDispatch &dispatch)
+    const seventv::eventapi::EmoteRemoveDispatch &dispatch)
 {
     auto removed = SeventvEmotes::removeEmote(this->seventvEmotes_, dispatch);
     if (!removed)
@@ -730,7 +750,7 @@ void TwitchChannel::removeSeventvEmote(
 }
 
 void TwitchChannel::updateSeventvUser(
-    const SeventvEventAPIUserConnectionUpdateDispatch &dispatch)
+    const seventv::eventapi::UserConnectionUpdateDispatch &dispatch)
 {
     if (dispatch.connectionIndex != this->seventvUserTwitchConnectionIndex_)
     {
@@ -1563,6 +1583,71 @@ boost::optional<CheerEmote> TwitchChannel::cheerEmote(const QString &string)
         }
     }
     return boost::none;
+}
+
+void TwitchChannel::updateSevenTVActivity()
+{
+    static const QString seventvActivityUrl =
+        QStringLiteral("https://7tv.io/v3/users/%1/presences");
+
+    const auto currentSeventvUserID =
+        getApp()->accounts->twitch.getCurrent()->getSeventvUserID();
+    if (currentSeventvUserID.isEmpty())
+    {
+        return;
+    }
+
+    if (!getSettings()->enableSevenTVEventAPI)
+    {
+        return;
+    }
+
+    if (this->nextSeventvActivity_.isValid() &&
+        QDateTime::currentDateTimeUtc() < this->nextSeventvActivity_)
+    {
+        return;
+    }
+    // Make sure to not send activity again before receiving the response
+    this->nextSeventvActivity_ = this->nextSeventvActivity_.addSecs(300);
+
+    qCDebug(chatterinoSeventv) << "Sending activity in" << this->getName();
+
+    QJsonObject payload;
+    payload["kind"] = 1;
+
+    QJsonObject data;
+    data["id"] = this->roomId();
+    data["platform"] = "TWITCH";
+
+    payload["data"] = data;
+
+    NetworkRequest(seventvActivityUrl.arg(currentSeventvUserID),
+                   NetworkRequestType::Post)
+        .header("Content-Type", "application/json")
+        .payload(QJsonDocument(payload).toJson(QJsonDocument::Compact))
+        .onSuccess([chan = weakOf<Channel>(this)](const auto &response) {
+            const auto self =
+                std::dynamic_pointer_cast<TwitchChannel>(chan.lock());
+            if (!self)
+            {
+                return Success;
+            }
+            const auto json = response.parseJson();
+            self->nextSeventvActivity_ =
+                QDateTime::currentDateTimeUtc().addSecs(10);
+            return Success;
+        })
+        .concurrent()
+        .execute();
+}
+
+void TwitchChannel::listenSevenTVCosmetics()
+{
+    if (getApp()->twitch->seventvEventAPI)
+    {
+        getApp()->twitch->seventvEventAPI->subscribeTwitchChannel(
+            this->roomId());
+    }
 }
 
 }  // namespace chatterino
